@@ -70,9 +70,9 @@ extern crate quickcheck;
 extern crate stats;
 
 use std::cmp;
-use std::fmt;
-use std::collections::BTreeMap;
 use std::collections::btree_map::Range;
+use std::collections::BTreeMap;
+use std::fmt;
 
 /// A histogram is a collection of samples, sorted into buckets.
 ///
@@ -81,7 +81,6 @@ use std::collections::btree_map::Range;
 pub struct Histogram {
     num_buckets: u64,
     samples: BTreeMap<u64, u64>,
-    stats: stats::OnlineStats,
     minmax: stats::MinMax<u64>,
 }
 
@@ -96,7 +95,6 @@ impl Histogram {
         Histogram {
             num_buckets,
             samples: Default::default(),
-            stats: Default::default(),
             minmax: Default::default(),
         }
     }
@@ -105,7 +103,21 @@ impl Histogram {
     pub fn add(&mut self, sample: u64) {
         *self.samples.entry(sample).or_insert(0) += 1;
         self.minmax.add(sample);
-        self.stats.add(sample);
+    }
+
+    /// Remove a sample from this histogram.
+    pub fn remove(&mut self, sample: u64) -> bool {
+        use std::collections::btree_map::Entry;
+
+        if let Entry::Occupied(mut entry) = self.samples.entry(sample) {
+            let val = entry.get_mut();
+            *val -= 1;
+            if val == &0 {
+                entry.remove_entry();
+            }
+            return true;
+        }
+        false
     }
 
     /// Get an iterator over this histogram's buckets.
@@ -132,15 +144,6 @@ impl fmt::Display for Histogram {
 
         writeln!(f, "# Min = {}", min)?;
         writeln!(f, "# Max = {}", max)?;
-        writeln!(f, "#")?;
-
-        let mean = self.stats.mean();
-        let dev = self.stats.stddev();
-        let var = self.stats.variance();
-
-        writeln!(f, "# Mean = {}", mean)?;
-        writeln!(f, "# Standard deviation = {}", dev)?;
-        writeln!(f, "# Variance = {}", var)?;
         writeln!(f, "#")?;
 
         let max_bucket_count = self.buckets().map(|b| b.count()).fold(0, cmp::max);
@@ -330,8 +333,53 @@ mod quickchecks {
                 histo.add(s);
             }
 
-            assert_eq!(len, histo.stats.len(), "stats.len() should be correct");
             assert_eq!(len, histo.minmax.len(), "minmax.len() should be correct");
+            assert_eq!(len as u64,
+                       histo.samples.values().cloned().sum::<u64>(),
+                       "samples.values() count should be correct");
+            assert_eq!(len as u64,
+                       histo.buckets().map(|b| b.count()).sum::<u64>(),
+                       "sum of buckets counts should be correct");
+        }
+
+        fn sum_of_bucket_counts_add_remove_is_zero(buckets: u64, samples: Vec<u64>) -> () {
+            if buckets == 0 {
+                return;
+            }
+
+            let len = samples.len();
+            let mut histo = Histogram::with_buckets(buckets);
+            for s in samples {
+                histo.add(s);
+                histo.remove(s);
+            }
+
+            assert_eq!(len, histo.minmax.len(), "minmax.len() should be correct");
+            assert_eq!(0,
+                       histo.samples.values().cloned().sum::<u64>(),
+                       "samples.values() count should be zero");
+            assert_eq!(0,
+                       histo.buckets().map(|b| b.count()).sum::<u64>(),
+                       "sum of buckets counts should be zero");
+        }
+
+        fn sum_of_bucket_counts_is_total_count_with_remove(buckets: u64, samples: Vec<u64>) -> () {
+            if buckets == 0 {
+                return;
+            }
+
+            let len = samples.len();
+            let mut histo = Histogram::with_buckets(buckets);
+            for s in samples {
+                histo.add(s);
+                histo.remove(s);
+                histo.add(s);
+            }
+
+            if len != 0 {
+                assert_ne!(len, histo.minmax.len(), "minmax.len() will be incorrect");
+            }
+
             assert_eq!(len as u64,
                        histo.samples.values().cloned().sum::<u64>(),
                        "samples.values() count should be correct");
