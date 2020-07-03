@@ -63,12 +63,15 @@
 #![deny(missing_debug_implementations)]
 #![deny(unsafe_code)]
 
+#![feature(map_first_last)]
+
 #[cfg(all(test, feature = "quickcheck"))]
 #[macro_use]
 extern crate quickcheck;
 
-extern crate stats;
+extern crate serde;
 
+use serde::{Serialize, Deserialize};
 use std::cmp;
 use std::collections::btree_map::Range;
 use std::collections::BTreeMap;
@@ -77,11 +80,10 @@ use std::fmt;
 /// A histogram is a collection of samples, sorted into buckets.
 ///
 /// See the crate level documentation for more details.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Histogram {
     num_buckets: u64,
     samples: BTreeMap<u64, u64>,
-    minmax: stats::MinMax<u64>,
 }
 
 impl Histogram {
@@ -95,14 +97,12 @@ impl Histogram {
         Histogram {
             num_buckets,
             samples: Default::default(),
-            minmax: Default::default(),
         }
     }
 
     /// Add a new sample to this histogram.
     pub fn add(&mut self, sample: u64) {
         *self.samples.entry(sample).or_insert(0) += 1;
-        self.minmax.add(sample);
     }
 
     /// Remove a sample from this histogram.
@@ -127,6 +127,14 @@ impl Histogram {
             index: 0,
         }
     }
+
+    fn min(&self) -> Option<&u64> {
+        self.samples.first_key_value().map(|(k, _)| k)
+    }
+
+    fn max(&self) -> Option<&u64> {
+        self.samples.last_key_value().map(|(k, _)| k)
+    }
 }
 
 impl fmt::Display for Histogram {
@@ -139,8 +147,8 @@ impl fmt::Display for Histogram {
             return Ok(());
         }
 
-        let min = self.minmax.min().unwrap();
-        let max = self.minmax.max().unwrap();
+        let min = self.min().unwrap();
+        let max = self.max().unwrap();
 
         writeln!(f, "# Min = {}", min)?;
         writeln!(f, "# Max = {}", max)?;
@@ -216,7 +224,7 @@ impl<'a> Iterator for Buckets<'a> {
             return None;
         }
 
-        let (min, max) = match (self.histogram.minmax.min(), self.histogram.minmax.max()) {
+        let (min, max) = match (self.histogram.min(), self.histogram.max()) {
             (Some(&min), Some(&max)) => (min, max),
             _ => return None,
         };
@@ -333,7 +341,6 @@ mod quickchecks {
                 histo.add(s);
             }
 
-            assert_eq!(len, histo.minmax.len(), "minmax.len() should be correct");
             assert_eq!(len as u64,
                        histo.samples.values().cloned().sum::<u64>(),
                        "samples.values() count should be correct");
@@ -347,14 +354,12 @@ mod quickchecks {
                 return;
             }
 
-            let len = samples.len();
             let mut histo = Histogram::with_buckets(buckets);
             for s in samples {
                 histo.add(s);
                 histo.remove(s);
             }
 
-            assert_eq!(len, histo.minmax.len(), "minmax.len() should be correct");
             assert_eq!(0,
                        histo.samples.values().cloned().sum::<u64>(),
                        "samples.values() count should be zero");
@@ -374,10 +379,6 @@ mod quickchecks {
                 histo.add(s);
                 histo.remove(s);
                 histo.add(s);
-            }
-
-            if len != 0 {
-                assert_ne!(len, histo.minmax.len(), "minmax.len() will be incorrect");
             }
 
             assert_eq!(len as u64,
