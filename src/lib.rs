@@ -128,12 +128,24 @@ impl Histogram {
         }
     }
 
-    fn min(&self) -> Option<&u64> {
+    /// Returns the min value of the histogram.
+    pub fn min(&self) -> Option<&u64> {
         self.samples.first_key_value().map(|(k, _)| k)
     }
 
-    fn max(&self) -> Option<&u64> {
+    /// Returns the max value in the histogram.
+    pub fn max(&self) -> Option<&u64> {
         self.samples.last_key_value().map(|(k, _)| k)
+    }
+
+    /// Returns the number of distinct samples in the histogram.
+    pub fn len(&self) -> usize {
+        self.samples.len()
+    }
+
+    /// Returns an iterator over the samples.
+    pub fn samples(&self) -> impl Iterator<Item=(&u64, &u64)> {
+        self.samples.iter()
     }
 }
 
@@ -152,6 +164,7 @@ impl fmt::Display for Histogram {
 
         writeln!(f, "# Min = {}", min)?;
         writeln!(f, "# Max = {}", max)?;
+        writeln!(f, "# Len = {}", self.len())?;
         writeln!(f, "#")?;
 
         let max_bucket_count = self.buckets().map(|b| b.count()).fold(0, cmp::max);
